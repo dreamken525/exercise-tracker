@@ -1383,10 +1383,23 @@ def should_reload_data():
 def initialize_or_reload_data():
     if os.path.exists("data/exercise_data.json"):
         with open("data/exercise_data.json", "r", encoding="utf-8") as f:
-            st.session_state.data = json.load(f)
-            # 使用台灣時區記錄最後加載時間
+            data = json.load(f)
+            
+            # 檢查是否需要修正時間戳
             tw_tz = pytz.timezone('Asia/Taipei')
-            st.session_state.last_load_time = datetime.now(tw_tz).timestamp()
+            now = datetime.now(tw_tz)
+            
+            # 修正所有記錄的時間戳為當前時間
+            for record in data["history"]:
+                try:
+                    record_time = datetime.strptime(record["timestamp"].split("+")[0], "%Y-%m-%dT%H:%M:%S")
+                    if record_time.year > now.year:
+                        record["timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S%z")
+                except:
+                    record["timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S%z")
+            
+            st.session_state.data = data
+            st.session_state.last_load_time = now.timestamp()
     else:
         st.session_state.data = {
             "sets": 0,
@@ -1398,7 +1411,6 @@ def initialize_or_reload_data():
         }
         with open("data/exercise_data.json", "w", encoding="utf-8") as f:
             json.dump(st.session_state.data, f, ensure_ascii=False, indent=4)
-            # 使用台灣時區記錄最後加載時間
             tw_tz = pytz.timezone('Asia/Taipei')
             st.session_state.last_load_time = datetime.now(tw_tz).timestamp()
 
@@ -1436,16 +1448,28 @@ def save_data():
     st.session_state.last_load_time = datetime.now(tw_tz).timestamp()
 
 def get_period_sets(days):
-    # 使用台灣時區
     tw_tz = pytz.timezone('Asia/Taipei')
-    now = datetime.now(tw_tz).date()
-    start_time = now - timedelta(days=days-1)  # 修改為包含當天
+    now = datetime.now(tw_tz)
+    
+    # 計算日期範圍
+    now_date = now.date()
+    start_date = now_date - timedelta(days=days-1)
+    
     total = 0
     for record in st.session_state.data["history"]:
-        # 將時間戳轉換為台灣時間
-        record_date = datetime.fromisoformat(record["timestamp"]).replace(tzinfo=pytz.UTC).astimezone(tw_tz).date()
-        if record_date >= start_time and record_date <= now:
-            total += record["sets"]
+        try:
+            # 解析時間戳
+            record_time = datetime.strptime(record["timestamp"].split("+")[0], "%Y-%m-%dT%H:%M:%S")
+            record_time = tw_tz.localize(record_time)
+            record_date = record_time.date()
+            
+            if record_date >= start_date and record_date <= now_date:
+                total += record["sets"]
+                
+        except Exception as e:
+            st.error(f"Error processing record: {e}")
+            continue
+    
     return total
 
 # 創建標題區域
@@ -1458,31 +1482,32 @@ st.markdown(f"""
 
 # 使用卡片式設計顯示按鈕
 col1, col2 = st.columns(2)
-with col1:
-    if st.button("完成半組! 💪", use_container_width=True):
-        # 使用台灣時間
+
+def save_new_record(sets):
+    try:
         tw_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(tw_tz)
+        
+        timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        
         st.session_state.data["history"].append({
-            "timestamp": current_time.isoformat(),
-            "sets": 0.5
+            "timestamp": timestamp,
+            "sets": sets
         })
         save_data()
-        show_encouragement(get_smart_encouragement(st.session_state.data, 0.5))
+        show_encouragement(get_smart_encouragement(st.session_state.data, sets))
         st.rerun()
+    except Exception as e:
+        st.error(f"保存記錄時發生錯誤: {e}")
+
+# 修改按鈕處理代碼
+with col1:
+    if st.button("完成半組! 💪", use_container_width=True):
+        save_new_record(0.5)
 
 with col2:
     if st.button("完成一組! 🔥", use_container_width=True):
-        # 使用台灣時間
-        tw_tz = pytz.timezone('Asia/Taipei')
-        current_time = datetime.now(tw_tz)
-        st.session_state.data["history"].append({
-            "timestamp": current_time.isoformat(),
-            "sets": 1
-        })
-        save_data()
-        show_encouragement(get_smart_encouragement(st.session_state.data, 1))
-        st.rerun()
+        save_new_record(1)
 
 # 顯示進度
 col1, col2 = st.columns(2)
