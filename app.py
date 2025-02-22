@@ -1381,26 +1381,35 @@ def should_reload_data():
 
 # 初始化或重新加載數據
 def initialize_or_reload_data():
+    # 使用台灣時區
+    tw_tz = pytz.timezone('Asia/Taipei')
+    now = datetime.now(tw_tz)
+    today = now.date()
+    
+    print(f"初始化數據 - 當前時間: {now}")  # 調試日誌
+    
     if os.path.exists("data/exercise_data.json"):
         with open("data/exercise_data.json", "r", encoding="utf-8") as f:
             data = json.load(f)
             
-            # 檢查是否需要修正時間戳
-            tw_tz = pytz.timezone('Asia/Taipei')
-            now = datetime.now(tw_tz)
-            
-            # 修正所有記錄的時間戳為當前時間
-            for record in data["history"]:
-                try:
-                    record_time = datetime.strptime(record["timestamp"].split("+")[0], "%Y-%m-%dT%H:%M:%S")
-                    if record_time.year > now.year:
-                        record["timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S%z")
-                except:
-                    record["timestamp"] = now.strftime("%Y-%m-%dT%H:%M:%S%z")
+            # 檢查最後一條記錄的日期
+            if data["history"]:
+                last_record = data["history"][-1]
+                last_record_time = datetime.fromisoformat(last_record["timestamp"].replace("Z", "+00:00"))
+                last_record_time = last_record_time.astimezone(tw_tz)
+                last_record_date = last_record_time.date()
+                
+                print(f"最後記錄日期: {last_record_date}")  # 調試日誌
+                
+                # 如果最後記錄不是今天，重置當日組數
+                if last_record_date < today:
+                    print("檢測到日期變更，重置組數")  # 調試日誌
+                    data["sets"] = 0
             
             st.session_state.data = data
             st.session_state.last_load_time = now.timestamp()
     else:
+        print("創建新的數據文件")  # 調試日誌
         st.session_state.data = {
             "sets": 0,
             "daily_goal": 10,
@@ -1411,8 +1420,7 @@ def initialize_or_reload_data():
         }
         with open("data/exercise_data.json", "w", encoding="utf-8") as f:
             json.dump(st.session_state.data, f, ensure_ascii=False, indent=4)
-            tw_tz = pytz.timezone('Asia/Taipei')
-            st.session_state.last_load_time = datetime.now(tw_tz).timestamp()
+            st.session_state.last_load_time = now.timestamp()
 
 # 檢查是否需要重新加載數據
 if 'data' not in st.session_state or should_reload_data():
@@ -1455,21 +1463,25 @@ def get_period_sets(days):
     now_date = now.date()
     start_date = now_date - timedelta(days=days-1)
     
+    print(f"計算期間組數 - 開始日期: {start_date}, 結束日期: {now_date}")  # 調試日誌
+    
     total = 0
     for record in st.session_state.data["history"]:
         try:
-            # 解析時間戳
-            record_time = datetime.strptime(record["timestamp"].split("+")[0], "%Y-%m-%dT%H:%M:%S")
-            record_time = tw_tz.localize(record_time)
+            # 解析時間戳並轉換為台灣時區
+            record_time = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+            record_time = record_time.astimezone(tw_tz)
             record_date = record_time.date()
             
-            if record_date >= start_date and record_date <= now_date:
+            if start_date <= record_date <= now_date:
                 total += record["sets"]
+                print(f"計入記錄 - 日期: {record_date}, 組數: {record['sets']}")  # 調試日誌
                 
         except Exception as e:
-            st.error(f"Error processing record: {e}")
+            print(f"處理記錄時發生錯誤: {e}")  # 調試日誌
             continue
     
+    print(f"期間總組數: {total}")  # 調試日誌
     return total
 
 # 創建標題區域
@@ -1488,16 +1500,31 @@ def save_new_record(sets):
         tw_tz = pytz.timezone('Asia/Taipei')
         current_time = datetime.now(tw_tz)
         
-        timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        # 檢查是否需要重置組數（新的一天）
+        if st.session_state.data["history"]:
+            last_record = st.session_state.data["history"][-1]
+            last_record_time = datetime.fromisoformat(last_record["timestamp"].replace("Z", "+00:00"))
+            last_record_time = last_record_time.astimezone(tw_tz)
+            
+            if last_record_time.date() < current_time.date():
+                print(f"新的一天開始，重置組數 - 上次記錄: {last_record_time.date()}, 當前: {current_time.date()}")
+                st.session_state.data["sets"] = 0
         
+        # 保存新記錄
+        timestamp = current_time.strftime("%Y-%m-%dT%H:%M:%S%z")
         st.session_state.data["history"].append({
             "timestamp": timestamp,
             "sets": sets
         })
+        
+        # 更新總組數
+        st.session_state.data["sets"] += sets
+        
         save_data()
         show_encouragement(get_smart_encouragement(st.session_state.data, sets))
         st.rerun()
     except Exception as e:
+        print(f"保存記錄時發生錯誤: {e}")  # 調試日誌
         st.error(f"保存記錄時發生錯誤: {e}")
 
 # 修改按鈕處理代碼
